@@ -9,19 +9,18 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 URL = "https://www.icaionlineregistration.org/launchbatchdetail.aspx"
 
 def is_within_active_hours():
-    """Checks if current time is between 8:00 AM and 12:00 Midnight IST."""
+    """Check if current time is between 8:00 AM and 12:00 Midnight IST."""
     ist_tz = zoneinfo.ZoneInfo("Asia/Kolkata")
     now_ist = datetime.now(ist_tz)
     current_time = now_ist.time()
 
-    # Active window: 08:00:00 to 23:59:59 (8:00 AM to Midnight IST)
     start_time = time(8, 0, 0)
     end_time = time(23, 59, 59)
 
     if start_time <= current_time <= end_time:
         return True
     
-    print(f"Current time is {now_ist.strftime('%I:%M %p')} IST. Outside 8:00 AM - 12:00 Midnight window. Skipping check.")
+    print(f"Current time is {now_ist.strftime('%I:%M %p')} IST. Outside 8:00 AM - 12:00 Midnight window. Skipping.")
     return False
 
 def send_telegram_alert(message):
@@ -36,45 +35,60 @@ def send_telegram_alert(message):
     }
     try:
         res = requests.post(api_url, json=payload, timeout=15)
-        print("Telegram notification sent, status:", res.status_code)
+        print("Telegram notification status:", res.status_code)
     except Exception as e:
         print("Error sending Telegram message:", e)
 
 def check_icai_seats():
-    # 1. Enforce time window guard
     if not is_within_active_hours():
         return
 
     with sync_playwright() as p:
+        # Launch browser with standard desktop user agent
         browser = p.chromium.launch(headless=True)
-        page = browser.new_page()
+        context = browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        )
+        page = context.new_page()
+
         print("Navigating to ICAI portal...")
-        page.goto(URL, timeout=60000)
+        page.goto(URL, wait_until="domcontentloaded", timeout=60000)
+        page.wait_for_timeout(3000)
 
-        # 2. Select Region: Eastern
-        page.select_option("select[id*='ddlRegion']", label="Eastern")
-        page.wait_for_timeout(2500)
+        # 1. Select Region: Eastern
+        print("Selecting Region: Eastern...")
+        region_select = page.locator("select[id*='ddlRegion']")
+        region_select.wait_for(state="visible", timeout=30000)
+        region_select.select_option(label="Eastern")
 
-        # 3. Select POU: Kolkata
-        page.select_option("select[id*='ddlPOU']", label="Kolkata")
-        page.wait_for_timeout(2500)
+        # 2. Wait for ASP.NET postback to reload and populate Kolkata in POU
+        print("Waiting for POU dropdown to populate with Kolkata...")
+        page.wait_for_selector("select[id*='ddlPOU'] option:has-text('Kolkata')", timeout=30000)
+        pou_select = page.locator("select[id*='ddlPOU']")
+        pou_select.select_option(label="Kolkata")
+        page.wait_for_timeout(2000)
 
-        # 4. Select Course: AICITSS - Advanced Information Technology
-        page.select_option("select[id*='ddlCourse']", label="AICITSS - Advanced Information Technology")
-        page.wait_for_timeout(2500)
+        # 3. Select Course: AICITSS
+        print("Selecting Course...")
+        course_select = page.locator("select[id*='ddlCourse']")
+        course_select.wait_for(state="visible", timeout=30000)
+        course_select.select_option(label="AICITSS - Advanced Information Technology")
+        page.wait_for_timeout(2000)
 
-        # 5. Click Search button if present
+        # 4. Click Search
+        print("Clicking Search...")
         search_btn = page.locator("input[type='submit'][value*='Search'], input[id*='btnSearch']")
         if search_btn.count() > 0:
             search_btn.first.click()
-            page.wait_for_timeout(3500)
+            page.wait_for_load_state("domcontentloaded")
+            page.wait_for_timeout(4000)
 
-        # 6. Parse the batch details table
+        # 5. Check Table Results
+        print("Checking batch results...")
         table_rows = page.locator("table tr").all()
         header_indices = {}
         vacant_8am_batches = []
 
-        # Find column headers
         for row in table_rows:
             th_cells = row.locator("th").all()
             if th_cells:
@@ -90,7 +104,6 @@ def check_icai_seats():
                         header_indices["dates"] = idx
                 break
 
-        # Check rows for 8:00 AM batches with seats > 0
         for row in table_rows:
             td_cells = [td.inner_text().strip() for td in row.locator("td").all()]
             if not td_cells:
@@ -98,6 +111,7 @@ def check_icai_seats():
 
             row_text = " ".join(td_cells)
 
+            # Look specifically for 8:00 AM batches
             if "8:00 AM" in row_text:
                 avail_seats = 0
                 if "available" in header_indices and header_indices["available"] < len(td_cells):
@@ -118,7 +132,7 @@ def check_icai_seats():
 
         browser.close()
 
-        # 7. Notify ONLY if an 8:00 AM slot is available
+        # 6. Send alert only if a seat is available
         if vacant_8am_batches:
             alert_message = (
                 "🚨 *ICAI AICITSS Seat Vacancy Found!*\n\n"
@@ -127,10 +141,10 @@ def check_icai_seats():
                 + "\n\n".join(vacant_8am_batches)
                 + "\n\n🔗 [Book Immediately on ICAI Portal](https://www.icaionlineregistration.org/launchbatchdetail.aspx)"
             )
-            print("Vacancy detected! Sending Telegram notification...")
+            print("Vacancy found! Sending Telegram notification...")
             send_telegram_alert(alert_message)
         else:
-            print("Check complete: 0 seats available for 8:00 AM batches. No alert sent.")
+            print("Check complete: 0 seats available for 8:00 AM Kolkata batches. No alert sent.")
 
 if __name__ == "__main__":
     check_icai_seats()
