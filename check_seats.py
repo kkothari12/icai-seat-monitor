@@ -9,7 +9,7 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 URL = "https://www.icaionlineregistration.org/launchbatchdetail.aspx"
 
 def is_within_active_hours():
-    """Check if current time is between 8:00 AM and 12:00 Midnight IST."""
+    """Checks if current time is between 8:00 AM and 12:00 Midnight IST."""
     ist_tz = zoneinfo.ZoneInfo("Asia/Kolkata")
     now_ist = datetime.now(ist_tz)
     current_time = now_ist.time()
@@ -44,7 +44,6 @@ def check_icai_seats():
         return
 
     with sync_playwright() as p:
-        # Launch browser with standard desktop user agent
         browser = p.chromium.launch(headless=True)
         context = browser.new_context(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -55,36 +54,35 @@ def check_icai_seats():
         page.goto(URL, wait_until="domcontentloaded", timeout=60000)
         page.wait_for_timeout(3000)
 
-        # 1. Select Region: Eastern
+        # 1. Select Region: Eastern (found by option text, independent of HTML ID)
         print("Selecting Region: Eastern...")
-        region_select = page.locator("select[id*='ddlRegion']")
-        region_select.wait_for(state="visible", timeout=30000)
-        region_select.select_option(label="Eastern")
+        region_dropdown = page.locator("select:has(option:has-text('Eastern'))")
+        region_dropdown.wait_for(state="attached", timeout=30000)
+        region_dropdown.select_option(label="Eastern")
 
-        # 2. Wait for ASP.NET postback to reload and populate Kolkata in POU
+        # 2. Wait for ASP.NET to reload and populate Kolkata in POU dropdown
         print("Waiting for POU dropdown to populate with Kolkata...")
-        page.wait_for_selector("select[id*='ddlPOU'] option:has-text('Kolkata')", timeout=30000)
-        pou_select = page.locator("select[id*='ddlPOU']")
-        pou_select.select_option(label="Kolkata")
+        page.wait_for_selector("select option:has-text('Kolkata')", timeout=30000)
+        pou_dropdown = page.locator("select:has(option:has-text('Kolkata'))")
+        pou_dropdown.select_option(label="Kolkata")
         page.wait_for_timeout(2000)
 
         # 3. Select Course: AICITSS
         print("Selecting Course...")
-        course_select = page.locator("select[id*='ddlCourse']")
-        course_select.wait_for(state="visible", timeout=30000)
-        course_select.select_option(label="AICITSS - Advanced Information Technology")
+        course_dropdown = page.locator("select:has(option:has-text('AICITSS'))")
+        course_dropdown.select_option(label="AICITSS - Advanced Information Technology")
         page.wait_for_timeout(2000)
 
-        # 4. Click Search
-        print("Clicking Search...")
-        search_btn = page.locator("input[type='submit'][value*='Search'], input[id*='btnSearch']")
+        # 4. Click Search / Submit button
+        print("Submitting search...")
+        search_btn = page.locator("input[type='submit'], input[value*='Search' i], button:has-text('Search')")
         if search_btn.count() > 0:
             search_btn.first.click()
             page.wait_for_load_state("domcontentloaded")
             page.wait_for_timeout(4000)
 
-        # 5. Check Table Results
-        print("Checking batch results...")
+        # 5. Parse table results
+        print("Scanning batch rows...")
         table_rows = page.locator("table tr").all()
         header_indices = {}
         vacant_8am_batches = []
@@ -111,7 +109,7 @@ def check_icai_seats():
 
             row_text = " ".join(td_cells)
 
-            # Look specifically for 8:00 AM batches
+            # Look for batches with 8:00 AM start time
             if "8:00 AM" in row_text:
                 avail_seats = 0
                 if "available" in header_indices and header_indices["available"] < len(td_cells):
@@ -132,7 +130,7 @@ def check_icai_seats():
 
         browser.close()
 
-        # 6. Send alert only if a seat is available
+        # 6. Notify only when a seat is vacant
         if vacant_8am_batches:
             alert_message = (
                 "🚨 *ICAI AICITSS Seat Vacancy Found!*\n\n"
