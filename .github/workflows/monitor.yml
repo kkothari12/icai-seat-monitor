@@ -1,0 +1,30 @@
+name: ICAI 10-Min Seat Monitor (8 AM - 12 AM IST)
+
+on:
+  schedule:
+    # Runs every 10 minutes between 2:00 UTC and 18:50 UTC (7:30 AM - 12:20 AM IST)
+    - cron: '*/10 2-18 * * *'
+  workflow_dispatch: # Allows manual test runs anytime
+
+jobs:
+  check-seats:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Playwright & Requests
+        run: |
+          pip install playwright requests
+          playwright install chromium --with-deps
+
+      - name: Run Seat Monitor
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python check_seats.py
