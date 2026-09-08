@@ -35,7 +35,7 @@ def send_telegram_alert(message):
     }
     try:
         res = requests.post(api_url, json=payload, timeout=15)
-        print("Telegram notification status:", res.status_code)
+        print("Telegram notification sent, status:", res.status_code)
     except Exception as e:
         print("Error sending Telegram message:", e)
 
@@ -54,26 +54,31 @@ def check_icai_seats():
         page.goto(URL, wait_until="domcontentloaded", timeout=60000)
         page.wait_for_timeout(3000)
 
-        # 1. Select Region: Eastern (found by option text, independent of HTML ID)
+        # 1. Select Region: Eastern
         print("Selecting Region: Eastern...")
         region_dropdown = page.locator("select:has(option:has-text('Eastern'))")
-        region_dropdown.wait_for(state="attached", timeout=30000)
         region_dropdown.select_option(label="Eastern")
 
-        # 2. Wait for ASP.NET to reload and populate Kolkata in POU dropdown
-        print("Waiting for POU dropdown to populate with Kolkata...")
-        page.wait_for_selector("select option:has-text('Kolkata')", timeout=30000)
-        pou_dropdown = page.locator("select:has(option:has-text('Kolkata'))")
-        pou_dropdown.select_option(label="Kolkata")
+        # 2. Wait for Kolkata to be attached in the DOM (state='attached' ignores closed dropdown visibility)
+        print("Waiting for Kolkata to populate in POU...")
+        page.wait_for_selector("option[value='53'], option:has-text('KOLKATA')", state="attached", timeout=30000)
+        pou_dropdown = page.locator("select").nth(1)
+        pou_dropdown.select_option(value="53")
         page.wait_for_timeout(2000)
 
         # 3. Select Course: AICITSS
-        print("Selecting Course...")
+        print("Selecting Course: AICITSS...")
         course_dropdown = page.locator("select:has(option:has-text('AICITSS'))")
-        course_dropdown.select_option(label="AICITSS - Advanced Information Technology")
+        # Find the specific AICITSS option value dynamically
+        course_option = page.locator("select option").filter(has_text="AICITSS - Advanced Information Technology")
+        if course_option.count() > 0:
+            course_val = course_option.first.get_attribute("value")
+            course_dropdown.select_option(value=course_val)
+        else:
+            course_dropdown.select_option(label="AICITSS - Advanced Information Technology")
         page.wait_for_timeout(2000)
 
-        # 4. Click Search / Submit button
+        # 4. Click Search
         print("Submitting search...")
         search_btn = page.locator("input[type='submit'], input[value*='Search' i], button:has-text('Search')")
         if search_btn.count() > 0:
@@ -81,7 +86,7 @@ def check_icai_seats():
             page.wait_for_load_state("domcontentloaded")
             page.wait_for_timeout(4000)
 
-        # 5. Parse table results
+        # 5. Check Table Results
         print("Scanning batch rows...")
         table_rows = page.locator("table tr").all()
         header_indices = {}
@@ -109,7 +114,7 @@ def check_icai_seats():
 
             row_text = " ".join(td_cells)
 
-            # Look for batches with 8:00 AM start time
+            # Look specifically for 8:00 AM batches
             if "8:00 AM" in row_text:
                 avail_seats = 0
                 if "available" in header_indices and header_indices["available"] < len(td_cells):
@@ -130,7 +135,7 @@ def check_icai_seats():
 
         browser.close()
 
-        # 6. Notify only when a seat is vacant
+        # 6. Send alert only if a seat is available
         if vacant_8am_batches:
             alert_message = (
                 "🚨 *ICAI AICITSS Seat Vacancy Found!*\n\n"
